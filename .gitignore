@@ -1,0 +1,6 @@
+*.o
+*.a
+*.dll
+*.so
+/examples/example-ogg
+/examples/example-flac
