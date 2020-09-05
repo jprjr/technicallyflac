@@ -40,4 +40,6 @@ for(i=0;i<blocks_of_audio;i++) {
 }
 ```
 
+## LICENSE
 
+BSD Zero Clause (see the `LICENSE` file).
