@@ -67,18 +67,13 @@ int main(int argc, const char *argv[]) {
     raw_samples = (int16_t *)malloc(sizeof(int16_t) * f.channels * f.blocksize);
     samples = (int32_t *)malloc(sizeof(int32_t) * f.channels * f.blocksize);
 
-
-    if(technicallyflac_init(&f)) {
-        fclose(input);
-        fclose(output);
-        quit(1,tags,raw_samples,samples, mem.buf, NULL);
-        return 1;
-    }
-
     f.write = write_buffer;
     f.userdata = &mem;
 
-    if(fwrite("fLaC",1,4,output) != 4) QUIT
+    fsize = technicallyflac_init(&f);
+    if(fsize < 0) QUIT
+    if(fwrite(mem.buf,1,fsize,output) != (size_t)fsize) QUIT
+    mem.pos = 0;
 
     fsize = technicallyflac_streaminfo(&f,0);
     if(fwrite(mem.buf,1,fsize,output) != (size_t)fsize) QUIT

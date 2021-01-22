@@ -94,8 +94,6 @@ int main(int argc, const char *argv[]) {
     raw_samples = (int16_t *)malloc(sizeof(int16_t) * f.channels * f.blocksize);
     samples = (int32_t *)malloc(sizeof(int32_t) * f.channels * f.blocksize);
 
-    if(technicallyflac_init(&f)) QUIT
-
     /* ogg packet will always just use our memory buffer */
     op.packet = mem.buf;
 
@@ -136,7 +134,12 @@ int main(int argc, const char *argv[]) {
     mem.buf[11] = 'a';
     mem.buf[12] = 'C';
 
-    mem.pos = 13;
+    mem.pos = 9;
+
+    /* init writer and write "fLaC" */
+    fsize = technicallyflac_init(&f);
+    if(fsize < 0) QUIT
+
 
     /* write out streaminfo into buffer */
     fsize = technicallyflac_streaminfo(&f,0);

@@ -133,8 +133,9 @@ uint32_t
 technicallyflac_frame_size(uint8_t channels, uint8_t bitdepth, uint32_t num_frames);
 
 
-/* initialize the flac encoder, validate settings */
-/* returns 0 on success */
+/* initialize the flac encoder, validate settings, write out "fLaC" using callbacks */
+/* returns bytes written on success */
+/* you can pass NULL to get the bytes needed (4) */
 int
 technicallyflac_init(technicallyflac *f);
 
@@ -342,6 +343,11 @@ technicallyflac_init(technicallyflac *f) {
      * is it possible to have odd bit-depths (7-bit, 9-bit, etc?)
      */
 
+    int r;
+    technicallyflac_bitwriter bw;
+
+    if(f == NULL) return 4;
+
     if(f->bitdepth < 4 || f->bitdepth > 32 || f->bitdepth % 2 != 0) {
         return -1;
     }
@@ -381,7 +387,15 @@ technicallyflac_init(technicallyflac *f) {
     f->samplesize = f->bitdepth / 8;
     f->frameindex = 0;
 
-    return 0;
+    technicallyflac_bitwriter_init(&bw,f->write,f->userdata);
+
+    if((r = technicallyflac_bitwriter_write(&bw,8,'f')) != 0) return r;
+    if((r = technicallyflac_bitwriter_write(&bw,8,'L')) != 0) return r;
+    if((r = technicallyflac_bitwriter_write(&bw,8,'a')) != 0) return r;
+    if((r = technicallyflac_bitwriter_write(&bw,8,'C')) != 0) return r;
+    if((r = technicallyflac_bitwriter_flush(&bw)) != 0) return r;
+
+    return 4;
 }
 
 int

@@ -29,11 +29,9 @@ f.blocksize = 1024;
 f.write = my_write_callback;
 f.userdata = my_userdata;
 
-technicallyflac_init(&f);
 
-// write out "fLaC" to your stream with fwrite or something
-
-technicallyflac_streaminfo(&f,1);
+technicallyflac_init(&f); /* validates parameters, writes out "fLaC" */
+technicallyflac_streaminfo(&f,1); /* writes the streaminfo block */
 
 for(i=0;i<blocks_of_audio;i++) {
     technicallyflac_encode(&f,blocks[i].data,blocks[i].size);
