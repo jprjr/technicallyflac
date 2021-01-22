@@ -128,18 +128,11 @@ int main(int argc, const char *argv[]) {
     mem.buf[7] = 0x00;
     mem.buf[8] = 0x01;
 
-    /* 4-byte ascii "fLaC" */
-    mem.buf[9]  = 'f';
-    mem.buf[10] = 'L';
-    mem.buf[11] = 'a';
-    mem.buf[12] = 'C';
-
     mem.pos = 9;
 
-    /* init writer and write "fLaC" */
+    /* init writer and write "fLaC" into buffer */
     fsize = technicallyflac_init(&f);
     if(fsize < 0) QUIT
-
 
     /* write out streaminfo into buffer */
     fsize = technicallyflac_streaminfo(&f,0);
@@ -148,7 +141,7 @@ int main(int argc, const char *argv[]) {
     /* we now have the first packet, feed it in */
     op.bytes = mem.pos;
     op.b_o_s = 1;
-    
+
     if(ogg_stream_packetin(&os,&op) != 0) QUIT
 
     /* packet sent to stream successfully */
