@@ -176,6 +176,8 @@ int main(int argc, const char *argv[]) {
             if(write_ogg_page(&og,output) != (og.header_len + og.body_len)) QUIT
         }
 
+        /* this is not at all necessary, we could just call technicallyflac_encode_interleaved,
+         * but I want to make sure I can handle planar input */
         repack_samples_deinterleave(samples,raw_samples,2,frames,BIT_SCALE);
 
         fsize = technicallyflac_encode_planar(&f,samples,frames);
