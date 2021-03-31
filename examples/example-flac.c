@@ -17,7 +17,7 @@
 /* example assumes we're on a little-endian system - would need to have
  * a proper decoder for input WAV data. */
 
-#define BUFFER_SIZE 100
+#define BUFFER_SIZE 1
 
 
 int main(int argc, const char *argv[]) {
