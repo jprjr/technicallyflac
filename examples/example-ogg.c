@@ -14,12 +14,13 @@
         ogg_stream_clear(&os); \
         fclose(input); \
         fclose(output); \
-        quit(1,tags,raw_samples,samples, mem.buf, NULL); \
+        quit(1,tags,raw_samples,samplesbuf, NULL); \
         return 1; }
 
 /* re-define this if you'd like to experiment with other bit-depths (must be <= 16) */
 #define BIT_DEPTH  16
 #define BIT_SCALE (16 - BIT_DEPTH)
+#define BUFFER_SIZE 8192
 
 /* example that reads in a headerless WAV file and writes
  * out an FLAC-in-Ogg file with some tags. assumes WAV is 16-bit, 2channel, 44100Hz */
@@ -41,15 +42,17 @@ write_ogg_page(ogg_page *og, FILE *out) {
 }
 
 int main(int argc, const char *argv[]) {
-    membuffer mem;
+    uint8_t buffer[BUFFER_SIZE];
+    uint32_t bufferlen = BUFFER_SIZE;
+    uint32_t bufferpos = 0;
     FILE *input;
     FILE *output;
     uint32_t frames;
     int16_t *raw_samples;
-    int32_t *samples;
+    int32_t *samples[2];
+    int32_t *samplesbuf;
     uint8_t *tags;
     uint32_t tags_len;
-    int fsize;
     int serial;
 
     technicallyflac f;
@@ -80,22 +83,17 @@ int main(int argc, const char *argv[]) {
     /* create a set of vorbis_comments */
     tags = create_tags(&tags_len);
 
-    /* setup flac parameters */
-    f.samplerate = 44100;
-    f.bitdepth = BIT_DEPTH;
-    f.channels = 2;
-    f.blocksize = 882; /* 20ms */
-
-    mem.len = technicallyflac_frame_size(f.channels,f.bitdepth,f.blocksize);
-    mem.buf = (uint8_t *)malloc(mem.len);
-    mem.pos = 0;
-    memset(mem.buf,0,mem.len);
+    technicallyflac_init(&f,882,44100,2,16);
 
     raw_samples = (int16_t *)malloc(sizeof(int16_t) * f.channels * f.blocksize);
-    samples = (int32_t *)malloc(sizeof(int32_t) * f.channels * f.blocksize);
+    if(!raw_samples) abort();
+    samplesbuf = (int32_t *)malloc(sizeof(int32_t) * f.channels * f.blocksize);
+    if(!samplesbuf) abort();
+    samples[0] = &samplesbuf[0];
+    samples[1] = &samplesbuf[f.blocksize];
 
     /* ogg packet will always just use our memory buffer */
-    op.packet = mem.buf;
+    op.packet = buffer;
 
     /* set defaults for ogg_packet */
     op.bytes = 0;
@@ -104,42 +102,46 @@ int main(int argc, const char *argv[]) {
     op.granulepos = 0;
     op.packetno = 0;
 
-    f.write = write_buffer;
-    f.userdata = &mem;
-
     /* everything is allocated - let's create the first packet */
     /* going to just add stuff into the memory buffer and update fields */
 
     /* one-byte packet type: 0x7F */
-    mem.buf[0] = 0x7F;
+    buffer[0] = 0x7F;
 
     /* 4-byte ASCII signature FLAC */
-    mem.buf[1] = 'F';
-    mem.buf[2] = 'L';
-    mem.buf[3] = 'A';
-    mem.buf[4] = 'C';
+    buffer[1] = 'F';
+    buffer[2] = 'L';
+    buffer[3] = 'A';
+    buffer[4] = 'C';
 
     /* 1-byte major version number (1.0) */
-    mem.buf[5] = 0x01;
+    buffer[5] = 0x01;
     /* 1-byte minor version number (1.0) */
-    mem.buf[6] = 0x00;
+    buffer[6] = 0x00;
 
     /* 2-byte, big endian number of header packets (not including first) */
-    mem.buf[7] = 0x00;
-    mem.buf[8] = 0x01;
+    buffer[7] = 0x00;
+    buffer[8] = 0x01;
 
-    mem.pos = 9;
+    bufferpos = 9;
+    bufferlen = BUFFER_SIZE - bufferpos;
 
-    /* init writer and write "fLaC" into buffer */
-    fsize = technicallyflac_init(&f);
-    if(fsize < 0) QUIT
+    while(technicallyflac_streammarker(&f,&buffer[bufferpos],&bufferlen)) {
+        bufferpos += bufferlen;
+        bufferlen = BUFFER_SIZE - bufferpos;
+    }
+    bufferpos += bufferlen;
+    bufferlen = BUFFER_SIZE - bufferpos;
 
-    /* write out streaminfo into buffer */
-    fsize = technicallyflac_streaminfo(&f,0);
-    if(fsize < 0) QUIT
+    while(technicallyflac_streaminfo(&f,&buffer[bufferpos],&bufferlen,0)) {
+        bufferpos += bufferlen;
+        bufferlen = BUFFER_SIZE - bufferpos;
+    }
+    bufferpos += bufferlen;
+    bufferlen = BUFFER_SIZE - bufferpos;
 
     /* we now have the first packet, feed it in */
-    op.bytes = mem.pos;
+    op.bytes = bufferpos;
     op.b_o_s = 1;
 
     if(ogg_stream_packetin(&os,&op) != 0) QUIT
@@ -147,7 +149,8 @@ int main(int argc, const char *argv[]) {
     /* packet sent to stream successfully */
     op.packetno++;
     op.b_o_s = 0;
-    mem.pos = 0;
+    bufferpos = 0;
+    bufferlen = BUFFER_SIZE;
 
     /* force a flush, first page should only have streaminfo packet */
     if(ogg_stream_flush(&os,&og) == 0) QUIT
@@ -156,18 +159,22 @@ int main(int argc, const char *argv[]) {
 
 
     /* write out the vorbis comment page */
-    fsize = technicallyflac_metadata_block(&f, 1, 4, tags, tags_len);
-    if(fsize < 0) QUIT
+    while(technicallyflac_metadata(&f,&buffer[bufferpos],&bufferlen,1,4,tags_len,tags)) {
+        bufferpos += bufferlen;
+        bufferlen = BUFFER_SIZE - bufferpos;
+    }
+    bufferpos += bufferlen;
+    bufferlen = BUFFER_SIZE - bufferpos;
 
-    op.bytes = mem.pos;
+    op.bytes = bufferpos;
     if(ogg_stream_packetin(&os,&op) != 0) QUIT
 
     op.packetno++;
-    mem.pos = 0;
+    bufferpos = 0;
+    bufferlen = BUFFER_SIZE;
 
     if(ogg_stream_flush(&os,&og) == 0) QUIT
     if(write_ogg_page(&og,output) != (og.header_len + og.body_len)) QUIT
-
 
     while((frames = fread(raw_samples,sizeof(int16_t) * 2, f.blocksize, input)) > 0) {
 
@@ -176,14 +183,19 @@ int main(int argc, const char *argv[]) {
             if(write_ogg_page(&og,output) != (og.header_len + og.body_len)) QUIT
         }
 
-        /* this is not at all necessary, we could just call technicallyflac_encode_interleaved,
-         * but I want to make sure I can handle planar input */
         repack_samples_deinterleave(samples,raw_samples,2,frames,BIT_SCALE);
 
-        fsize = technicallyflac_encode_planar(&f,samples,frames);
-        if(fsize < 0) QUIT
+        bufferpos = 0;
+        bufferlen = BUFFER_SIZE;
 
-        op.bytes = mem.pos;
+        while(technicallyflac_frame(&f,&buffer[bufferpos],&bufferlen,frames,samples)) {
+            bufferpos += bufferlen;
+            bufferlen -= bufferpos;
+        }
+        bufferpos += bufferlen;
+        bufferlen -= bufferpos;
+
+        op.bytes = bufferpos;
         op.granulepos += frames;
 
         if(frames != f.blocksize) {
@@ -193,7 +205,6 @@ int main(int argc, const char *argv[]) {
 
         if(ogg_stream_packetin(&os,&op) != 0) QUIT
 
-        mem.pos = 0;
         op.packetno++;
     }
 
@@ -205,7 +216,7 @@ int main(int argc, const char *argv[]) {
     ogg_stream_clear(&os);
     fclose(input);
     fclose(output);
-    quit(0,tags,raw_samples,samples, mem.buf, NULL);
+    quit(0,tags,raw_samples,samplesbuf, NULL);
     return 0;
 }
 

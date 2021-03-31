@@ -7,12 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define QUIT { \
-        fclose(input); \
-        fclose(output); \
-        quit(1,tags,raw_samples,samples, mem.buf, NULL); \
-        return 1; }
-
 /* example that reads in a headerless WAV file and writes
  * out a FLAC file with some tags. assumes WAV is 16-bit, 2channel, 44100Hz */
 
@@ -23,17 +17,20 @@
 /* example assumes we're on a little-endian system - would need to have
  * a proper decoder for input WAV data. */
 
+#define BUFFER_SIZE 100
+
 
 int main(int argc, const char *argv[]) {
-    membuffer mem;
+    uint8_t buffer[BUFFER_SIZE];
+    uint32_t bufferlen = BUFFER_SIZE;
     FILE *input;
     FILE *output;
     uint32_t frames;
     int16_t *raw_samples;
-    int32_t *samples;
+    int32_t *samples[2];
+    int32_t *samplesbuf;
     uint8_t *tags;
     uint32_t tags_len;
-    int fsize;
     technicallyflac f;
 
     if(argc < 3) {
@@ -53,46 +50,53 @@ int main(int argc, const char *argv[]) {
     /* create a set of vorbis_comments */
     tags = create_tags(&tags_len);
 
-    /* setup flac parameters */
-    f.samplerate = 44100;
-    f.bitdepth = 16;
-    f.channels = 2;
-    f.blocksize = 882; /* 20ms */
-
-    mem.len = technicallyflac_frame_size(f.channels,f.bitdepth,f.blocksize);
-    mem.buf = (uint8_t *)malloc(mem.len);
-    mem.pos = 0;
-    memset(mem.buf,0,mem.len);
+    technicallyflac_init(&f,882,44100,2,16);
 
     raw_samples = (int16_t *)malloc(sizeof(int16_t) * f.channels * f.blocksize);
-    samples = (int32_t *)malloc(sizeof(int32_t) * f.channels * f.blocksize);
+    if(!raw_samples) abort();
+    samplesbuf = (int32_t *)malloc(sizeof(int32_t) * f.channels * f.blocksize);
+    if(!samplesbuf) abort();
+    samples[0] = &samplesbuf[0];
+    samples[1] = &samplesbuf[f.blocksize];
 
-    f.write = write_buffer;
-    f.userdata = &mem;
+    while(technicallyflac_streammarker(&f,buffer,&bufferlen)) {
+        fwrite(buffer,1,bufferlen,output);
+        bufferlen = BUFFER_SIZE;
+    }
 
-    fsize = technicallyflac_init(&f);
-    if(fsize < 0) QUIT
-    if(fwrite(mem.buf,1,fsize,output) != (size_t)fsize) QUIT
-    mem.pos = 0;
+    fwrite(buffer,1,bufferlen,output);
+    bufferlen = BUFFER_SIZE;
 
-    fsize = technicallyflac_streaminfo(&f,0);
-    if(fwrite(mem.buf,1,fsize,output) != (size_t)fsize) QUIT
-    mem.pos = 0;
+    while(technicallyflac_streaminfo(&f,buffer,&bufferlen,0)) {
+        fwrite(buffer,1,bufferlen,output);
+        bufferlen = BUFFER_SIZE;
+    }
 
-    fsize = technicallyflac_metadata_block(&f, 1, 4, tags, tags_len);
-    if(fwrite(mem.buf,1,fsize,output) != (size_t)fsize) QUIT
-    mem.pos = 0;
+    fwrite(buffer,1,bufferlen,output);
+    bufferlen = BUFFER_SIZE;
+
+    while(technicallyflac_metadata(&f,buffer,&bufferlen,1, 4,tags_len, tags)) {
+        fwrite(buffer,1,bufferlen,output);
+        bufferlen = BUFFER_SIZE;
+    }
+
+    fwrite(buffer,1,bufferlen,output);
+    bufferlen = BUFFER_SIZE;
 
     while((frames = fread(raw_samples,sizeof(int16_t) * 2, f.blocksize, input)) > 0) {
-        repack_samples(samples,raw_samples,2,frames, 0);
-        fsize = technicallyflac_encode_interleaved(&f,samples,frames);
-        if(fwrite(mem.buf,1,fsize,output) != (size_t)fsize) QUIT
-        mem.pos = 0;
+        repack_samples_deinterleave(samples,raw_samples,2,frames, 0);
+
+        while(technicallyflac_frame(&f,buffer,&bufferlen,frames,samples)) {
+            fwrite(buffer,1,bufferlen,output);
+            bufferlen = BUFFER_SIZE;
+        }
+        fwrite(buffer,1,bufferlen,output);
+        bufferlen = BUFFER_SIZE;
     }
 
     fclose(input);
     fclose(output);
-    quit(0,tags,raw_samples,samples,mem.buf, NULL);
+    quit(0,tags,raw_samples,samplesbuf, NULL);
 
     return 0;
 }

@@ -33,7 +33,7 @@ int
 write_buffer(uint8_t *bytes, uint32_t len, void *userdata);
 
 void
-repack_samples_deinterleave(int32_t *d, int16_t *s, uint32_t channels, uint32_t num, uint8_t scale);
+repack_samples_deinterleave(int32_t **d, int16_t *s, uint32_t channels, uint32_t num, uint8_t scale);
 
 void
 repack_samples(int32_t *d, int16_t *s, uint32_t channels, uint32_t num, uint8_t scale);

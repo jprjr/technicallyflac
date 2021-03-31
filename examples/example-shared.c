@@ -20,39 +20,17 @@ quit(int e, ...) {
     EXAMPLE_EXIT(e);
 }
 
-int
-write_buffer(uint8_t *bytes, uint32_t len, void *userdata) {
-    membuffer *mem = (membuffer *)userdata;
-    if(mem->pos + len > mem->len) return -1;
-    memcpy(&mem->buf[mem->pos],bytes,len);
-    mem->pos += len;
-    return 0;
-}
-
 void
-repack_samples_deinterleave(int32_t *d, int16_t *s, uint32_t channels, uint32_t num, uint8_t scale) {
+repack_samples_deinterleave(int32_t **d, int16_t *s, uint32_t channels, uint32_t num, uint8_t scale) {
     uint32_t i = 0;
     uint32_t c = 0;
     while(c < channels) {
         i = 0;
         while(i < num) {
-            d[(c * num) + i] = (int16_t)(((uint16_t)s[(i*channels)+c]) >> scale);
+            d[c][i] = (int16_t)(((uint16_t)s[(i*channels)+c]) >> scale);
             i++;
         }
         c++;
-    }
-}
-
-void
-repack_samples(int32_t *d, int16_t *s, uint32_t channels, uint32_t num, uint8_t scale) {
-    uint32_t c = 0;
-    while(num > 0) {
-        c=0;
-        while(c++ < channels) {
-            *d++ = (int16_t)(((uint16_t)*s) >> scale);
-            s++;
-        }
-        num--;
     }
 }
 
