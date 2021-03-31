@@ -20,6 +20,8 @@
 /* re-define this if you'd like to experiment with other bit-depths (must be <= 16) */
 #define BIT_DEPTH  16
 #define BIT_SCALE (16 - BIT_DEPTH)
+#define CHANNELS 2
+#define CHANNELSMODE CHANNELS /* change to 9,10,11 for left, right, mid-side stereo */
 
 /* example that reads in a headerless WAV file and writes
  * out an FLAC-in-Ogg file with some tags. assumes WAV is 16-bit, 2channel, 44100Hz */
@@ -49,11 +51,12 @@ int main(int argc, const char *argv[]) {
     FILE *output;
     uint32_t frames;
     int16_t *raw_samples;
-    int32_t *samples[2];
+    int32_t *samples[CHANNELS];
     int32_t *samplesbuf;
     uint8_t *tags;
     uint32_t tags_len;
     int serial;
+    uint32_t i;
 
     technicallyflac f;
 
@@ -66,7 +69,7 @@ int main(int argc, const char *argv[]) {
         return 1;
     }
 
-    if(technicallyflac_init(&f,882,44100,2,BIT_DEPTH)) {
+    if(technicallyflac_init(&f,882,44100,CHANNELSMODE,BIT_DEPTH)) {
         printf("init failed, bail\n");
         return 1;
     }
@@ -88,15 +91,17 @@ int main(int argc, const char *argv[]) {
     /* create a set of vorbis_comments */
     tags = create_tags(&tags_len);
 
-    raw_samples = (int16_t *)malloc(sizeof(int16_t) * f.channels * f.blocksize);
+    raw_samples = (int16_t *)malloc(sizeof(int16_t) * CHANNELS * f.blocksize);
     if(!raw_samples) abort();
-    samplesbuf = (int32_t *)malloc(sizeof(int32_t) * f.channels * f.blocksize);
+    samplesbuf = (int32_t *)malloc(sizeof(int32_t) * CHANNELS * f.blocksize);
     if(!samplesbuf) abort();
-    samples[0] = &samplesbuf[0];
-    samples[1] = &samplesbuf[f.blocksize];
+
+    for(i=0;i<CHANNELS;i++) {
+        samples[i] = &samplesbuf[i * f.blocksize];
+    }
 
     /* find our max packet size */
-    buffersize = technicallyflac_size_frame(882,2,BIT_DEPTH);
+    buffersize = technicallyflac_size_frame(882,CHANNELSMODE,BIT_DEPTH);
     buffer = malloc(buffersize);
     if(!buffer) abort();
     bufferlen = buffersize;
@@ -176,14 +181,14 @@ int main(int argc, const char *argv[]) {
     if(ogg_stream_flush(&os,&og) == 0) QUIT
     if(write_ogg_page(&og,output) != (og.header_len + og.body_len)) QUIT
 
-    while((frames = fread(raw_samples,sizeof(int16_t) * 2, f.blocksize, input)) > 0) {
+    while((frames = fread(raw_samples,sizeof(int16_t) * CHANNELS, f.blocksize, input)) > 0) {
 
         /* first check for and write out any pages */
         while(ogg_stream_pageout(&os,&og) != 0) {
             if(write_ogg_page(&og,output) != (og.header_len + og.body_len)) QUIT
         }
 
-        repack_samples_deinterleave(samples,raw_samples,2,frames,BIT_SCALE);
+        repack_samples_deinterleave(samples,raw_samples,CHANNELS,frames,BIT_SCALE);
 
         bufferpos = 0;
         bufferlen = buffersize;

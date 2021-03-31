@@ -1,6 +1,6 @@
 .PHONY: all clean
 
-CFLAGS = -Wall -Wextra -g -O2
+CFLAGS = -Wall -Wextra -g -O0
 LDFLAGS = 
 LIBOGG_CFLAGS = $(shell pkg-config --cflags ogg)
 LIBOGG_LDFLAGS = $(shell pkg-config --libs ogg)

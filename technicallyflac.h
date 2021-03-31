@@ -60,6 +60,10 @@ TF_PURE
 uint32_t technicallyflac_size_frame_index(uint32_t blocksize, uint8_t channels, uint8_t bitdepth, uint32_t frameindex);
 
 /* initialize a technicallyflac object, should be called before any other function */
+/* channels should be number of channels (1-8) OR
+ * 9 for left-side stereo
+ * 10 for right-side stereo
+ * 11 for mid/side stereo */
 int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t samplerate, uint8_t channels, uint8_t bitdepth);
 
 /*
@@ -123,6 +127,7 @@ struct technicallyflac_frame_header_state {
 
 struct technicallyflac_frame_state {
     uint32_t channel;
+    uint32_t channels; /* converts options 9-11 to 2, for stereo */
     uint32_t frame;
     uint32_t subframe_header;
     uint32_t footer;
@@ -145,7 +150,7 @@ struct technicallyflac_s {
     /* samplerate in Hz */
     uint32_t samplerate;
 
-    /* total channels, 1-8 */
+    /* total channels, 1-8 or 9-11 */
     uint8_t channels;
 
     /* bit depth 4 - 32 */
@@ -326,6 +331,8 @@ int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t sample
         return -1;
     }
 
+    if(f->channels < 1 || f->channels > 11) return -1;
+
     switch(f->bitdepth) {
         case 8:  {
             f->bitdepth_header = 1;
@@ -368,9 +375,14 @@ int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t sample
     f->fh_state.pos     = 0;
     f->fh_state.len     = 0;
     f->fr_state.channel = 0;
+    f->fr_state.channels = f->channels;
     f->fr_state.frame   = 0;
     f->fr_state.subframe_header = 0;
     f->fr_state.footer  = 0;
+
+    if(f->fr_state.channels > 8) {
+        f->fr_state.channels = 2;
+    }
 
     return 0;
 }
@@ -478,7 +490,12 @@ int technicallyflac_streaminfo(technicallyflac *f,uint8_t *output, uint32_t *byt
             /* 132 bits */
             case 16: {
                 /* channels */
-                technicallyflac_bitwriter_add(&f->bw,3,f->channels - 1);
+                if(f->channels > 8) {
+                    technicallyflac_bitwriter_add(&f->bw,3,1);
+                } else {
+                    technicallyflac_bitwriter_add(&f->bw,3,f->channels - 1);
+                }
+
                 /* bit depth */
                 technicallyflac_bitwriter_add(&f->bw,5,f->bitdepth - 1);
                 break;
@@ -715,12 +732,14 @@ int technicallyflac_frame_header(technicallyflac *f, uint8_t *output, uint32_t *
 
 int technicallyflac_frame(technicallyflac *f, uint8_t *output, uint32_t *bytes, uint32_t num_frames, int32_t **frames) {
     int r = 0;
+    int32_t left = 0;
+    int32_t right = 0;
 
     if(output == NULL || bytes == NULL || *bytes == 0) {
         return technicallyflac_size_frame_index(f->blocksize,f->channels,f->bitdepth,f->frameindex);
     }
 
-    if(f->fr_state.channel == f->channels && f->fr_state.footer == 3) {
+    if(f->fr_state.channel == f->fr_state.channels && f->fr_state.footer == 3) {
         f->fh_state.pos = 0;
         f->fh_state.len = 0;
         f->fr_state.subframe_header = 0;
@@ -745,7 +764,7 @@ int technicallyflac_frame(technicallyflac *f, uint8_t *output, uint32_t *bytes, 
     while(f->bw.pos < f->bw.len) {
         technicallyflac_bitwriter_flush(&f->bw);
 
-        if(f->fr_state.channel == f->channels && f->fr_state.footer == 3) {
+        if(f->fr_state.channel == f->fr_state.channels && f->fr_state.footer == 3) {
             break; /* all data is written */
         }
 
@@ -757,7 +776,7 @@ int technicallyflac_frame(technicallyflac *f, uint8_t *output, uint32_t *bytes, 
             continue; /* re-run loop to drain remaining bits before adding more */
         }
 
-        if(f->fr_state.channel < f->channels) {
+        if(f->fr_state.channel < f->fr_state.channels) {
             if(f->fr_state.subframe_header == 0) {
                 technicallyflac_bitwriter_add(&f->bw,1,0); /* zero-bit padding */
                 technicallyflac_bitwriter_add(&f->bw,6,1); /* frame type (VERBATIM) */
@@ -765,7 +784,35 @@ int technicallyflac_frame(technicallyflac *f, uint8_t *output, uint32_t *bytes, 
                 f->fr_state.subframe_header = 1;
             }
             else {
-                technicallyflac_bitwriter_add(&f->bw,f->bitdepth,frames[f->fr_state.channel][f->fr_state.frame++]);
+                if(f->channels < 9) {
+                    technicallyflac_bitwriter_add(&f->bw,f->bitdepth,frames[f->fr_state.channel][f->fr_state.frame]);
+                } else {
+                    left = frames[0][f->fr_state.frame];
+                    right = frames[1][f->fr_state.frame];
+                    if(f->channels == 9) {
+                        if(f->fr_state.channel == 0) {
+                            technicallyflac_bitwriter_add(&f->bw,f->bitdepth,left);
+                        } else {
+                            technicallyflac_bitwriter_add(&f->bw,f->bitdepth+1,left - right);
+                        }
+                    }
+                    else if(f->channels == 10) {
+                        if(f->fr_state.channel == 1) {
+                            technicallyflac_bitwriter_add(&f->bw,f->bitdepth,right);
+                        } else {
+                            technicallyflac_bitwriter_add(&f->bw,f->bitdepth+1,left - right);
+                        }
+                    }
+                    else if(f->channels == 11) {
+                        if(f->fr_state.channel == 0) {
+                            technicallyflac_bitwriter_add(&f->bw,f->bitdepth,(left + right) >> 1);
+                        } else {
+                            technicallyflac_bitwriter_add(&f->bw,f->bitdepth+1,left - right);
+                        }
+                    }
+                }
+
+                f->fr_state.frame++;
                 if(f->fr_state.frame == num_frames) {
                     f->fr_state.channel++;
                     f->fr_state.frame = 0;
@@ -790,7 +837,7 @@ int technicallyflac_frame(technicallyflac *f, uint8_t *output, uint32_t *bytes, 
         }
     }
 
-    r = f->fr_state.channel < f->channels || f->fr_state.footer < 3;
+    r = f->fr_state.channel < f->fr_state.channels || f->fr_state.footer < 3;
     if(r == 0) {
         assert(f->bw.bits == 0);
     }
@@ -808,11 +855,22 @@ uint32_t technicallyflac_size_frame_index(uint32_t blocksize, uint8_t channels, 
      *   (channels) bytes of subframe headers +
      *   (blocksize * bitdepth * channels) / bitdepth bytes for verbatim encoding
      */
-    uint32_t total_bits = blocksize * bitdepth * channels;
-    uint32_t total_bytes = total_bits / 8;
-    if(bitdepth % 8 != 0) {
+    uint32_t total_bits;
+    uint32_t total_bytes;
+
+    if(channels <= 8) {
+        total_bits = blocksize * bitdepth * channels;
+    } else {
+        total_bits = (blocksize * bitdepth) + (blocksize * (bitdepth + 1));
+    }
+
+    total_bytes = total_bits / 8;
+    if(total_bits % 8 != 0) {
         total_bytes++;
     }
+
+    if(channels > 8) channels = 2;
+
     total_bytes += 11 + channels;
     if(frameindex < (uint32_t)1 << 7) {
         total_bytes += 1;
