@@ -20,7 +20,6 @@
 /* re-define this if you'd like to experiment with other bit-depths (must be <= 16) */
 #define BIT_DEPTH  16
 #define BIT_SCALE (16 - BIT_DEPTH)
-#define BUFFER_SIZE 8192
 
 /* example that reads in a headerless WAV file and writes
  * out an FLAC-in-Ogg file with some tags. assumes WAV is 16-bit, 2channel, 44100Hz */
@@ -42,8 +41,9 @@ write_ogg_page(ogg_page *og, FILE *out) {
 }
 
 int main(int argc, const char *argv[]) {
-    uint8_t buffer[BUFFER_SIZE];
-    uint32_t bufferlen = BUFFER_SIZE;
+    uint8_t *buffer;
+    uint32_t bufferlen = 0;
+    uint32_t buffersize = 0;
     uint32_t bufferpos = 0;
     FILE *input;
     FILE *output;
@@ -66,6 +66,11 @@ int main(int argc, const char *argv[]) {
         return 1;
     }
 
+    if(technicallyflac_init(&f,882,44100,2,BIT_DEPTH)) {
+        printf("init failed, bail\n");
+        return 1;
+    }
+
     /* seed random number generator for making an ogg serial */
     srand((unsigned int)time(NULL));
     serial = rand();
@@ -83,14 +88,18 @@ int main(int argc, const char *argv[]) {
     /* create a set of vorbis_comments */
     tags = create_tags(&tags_len);
 
-    technicallyflac_init(&f,882,44100,2,16);
-
     raw_samples = (int16_t *)malloc(sizeof(int16_t) * f.channels * f.blocksize);
     if(!raw_samples) abort();
     samplesbuf = (int32_t *)malloc(sizeof(int32_t) * f.channels * f.blocksize);
     if(!samplesbuf) abort();
     samples[0] = &samplesbuf[0];
     samples[1] = &samplesbuf[f.blocksize];
+
+    /* find our max packet size */
+    buffersize = technicallyflac_size_frame(882,2,BIT_DEPTH);
+    buffer = malloc(buffersize);
+    if(!buffer) abort();
+    bufferlen = buffersize;
 
     /* ogg packet will always just use our memory buffer */
     op.packet = buffer;
@@ -124,21 +133,15 @@ int main(int argc, const char *argv[]) {
     buffer[8] = 0x01;
 
     bufferpos = 9;
-    bufferlen = BUFFER_SIZE - bufferpos;
+    bufferlen = buffersize - bufferpos;
 
-    while(technicallyflac_streammarker(&f,&buffer[bufferpos],&bufferlen)) {
-        bufferpos += bufferlen;
-        bufferlen = BUFFER_SIZE - bufferpos;
-    }
+    if(technicallyflac_streammarker(&f,&buffer[bufferpos],&bufferlen) != 0) abort(); /* this should happen in one call */
     bufferpos += bufferlen;
-    bufferlen = BUFFER_SIZE - bufferpos;
+    bufferlen = buffersize - bufferpos;
 
-    while(technicallyflac_streaminfo(&f,&buffer[bufferpos],&bufferlen,0)) {
-        bufferpos += bufferlen;
-        bufferlen = BUFFER_SIZE - bufferpos;
-    }
+    if(technicallyflac_streaminfo(&f,&buffer[bufferpos],&bufferlen,0) != 0) abort() ;
     bufferpos += bufferlen;
-    bufferlen = BUFFER_SIZE - bufferpos;
+    bufferlen = buffersize - bufferpos;
 
     /* we now have the first packet, feed it in */
     op.bytes = bufferpos;
@@ -150,7 +153,7 @@ int main(int argc, const char *argv[]) {
     op.packetno++;
     op.b_o_s = 0;
     bufferpos = 0;
-    bufferlen = BUFFER_SIZE;
+    bufferlen = buffersize;
 
     /* force a flush, first page should only have streaminfo packet */
     if(ogg_stream_flush(&os,&og) == 0) QUIT
@@ -159,19 +162,16 @@ int main(int argc, const char *argv[]) {
 
 
     /* write out the vorbis comment page */
-    while(technicallyflac_metadata(&f,&buffer[bufferpos],&bufferlen,1,4,tags_len,tags)) {
-        bufferpos += bufferlen;
-        bufferlen = BUFFER_SIZE - bufferpos;
-    }
+    if(technicallyflac_metadata(&f,&buffer[bufferpos],&bufferlen,1,4,tags_len,tags) != 0) abort ();
     bufferpos += bufferlen;
-    bufferlen = BUFFER_SIZE - bufferpos;
+    bufferlen = buffersize - bufferpos;
 
     op.bytes = bufferpos;
     if(ogg_stream_packetin(&os,&op) != 0) QUIT
 
     op.packetno++;
     bufferpos = 0;
-    bufferlen = BUFFER_SIZE;
+    bufferlen = buffersize;
 
     if(ogg_stream_flush(&os,&og) == 0) QUIT
     if(write_ogg_page(&og,output) != (og.header_len + og.body_len)) QUIT
@@ -186,12 +186,9 @@ int main(int argc, const char *argv[]) {
         repack_samples_deinterleave(samples,raw_samples,2,frames,BIT_SCALE);
 
         bufferpos = 0;
-        bufferlen = BUFFER_SIZE;
+        bufferlen = buffersize;
 
-        while(technicallyflac_frame(&f,&buffer[bufferpos],&bufferlen,frames,samples)) {
-            bufferpos += bufferlen;
-            bufferlen -= bufferpos;
-        }
+        if(technicallyflac_frame(&f,&buffer[bufferpos],&bufferlen,frames,samples) != 0) abort();
         bufferpos += bufferlen;
         bufferlen -= bufferpos;
 

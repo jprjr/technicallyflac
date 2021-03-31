@@ -26,24 +26,38 @@ typedef struct technicallyflac_s technicallyflac;
 extern "C" {
 #endif
 
+#if defined(__GNUC__) && __GNUC__ >= 2 && __GNUC_MINOR__ >= 5
+#define TF_PURE __attribute__((const))
+#endif
+
+#ifndef TF_PURE
+#define TF_PURE
+#endif
+
 /* returns the size of a technicallyflac object */
+TF_PURE
 size_t technicallyflac_size(void);
 
 /* returns the number of bytes required for a streammarker (4) */
+TF_PURE
 uint32_t technicallyflac_size_streammarker(void);
 
 /* returns the number of bytes required for a streaminfo block */
+TF_PURE
 uint32_t technicallyflac_size_streaminfo(void);
 
 /* returns the bytes required for a given metadata block */
 /* (it's just num_bytes + 4) */
+TF_PURE
 uint32_t technicallyflac_size_metadata(uint32_t num_bytes);
 
 /* returns the max bytes required for a given blocksize, channels, bitdepth */
+TF_PURE
 uint32_t technicallyflac_size_frame(uint32_t blocksize, uint8_t channels, uint8_t bitdepth);
 
 /* returns the max bytes required for a given blocksize, channels, bitdepth, and frame index */
-uint32_t technicallyflac_size_frame_frameno(uint32_t blocksize, uint8_t channels, uint8_t bitdepth, uint32_t frameno);
+TF_PURE
+uint32_t technicallyflac_size_frame_index(uint32_t blocksize, uint8_t channels, uint8_t bitdepth, uint32_t frameindex);
 
 /* initialize a technicallyflac object, should be called before any other function */
 int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t samplerate, uint8_t channels, uint8_t bitdepth);
@@ -308,7 +322,7 @@ int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t sample
     f->channels   = channels;
     f->bitdepth   = bitdepth;
 
-    if(f->bitdepth < 4 || f->bitdepth > 32 || f->bitdepth % 2 != 0) {
+    if(f->bitdepth < 4 || f->bitdepth > 32) {
         return -1;
     }
 
@@ -703,7 +717,7 @@ int technicallyflac_frame(technicallyflac *f, uint8_t *output, uint32_t *bytes, 
     int r = 0;
 
     if(output == NULL || bytes == NULL || *bytes == 0) {
-        return technicallyflac_size_frame_frameno(f->blocksize,f->channels,f->bitdepth,f->frameindex);
+        return technicallyflac_size_frame_index(f->blocksize,f->channels,f->bitdepth,f->frameindex);
     }
 
     if(f->fr_state.channel == f->channels && f->fr_state.footer == 3) {
@@ -785,7 +799,8 @@ int technicallyflac_frame(technicallyflac *f, uint8_t *output, uint32_t *bytes, 
     return r;
 }
 
-uint32_t technicallyflac_size_frame_frameno(uint32_t blocksize, uint8_t channels, uint8_t bitdepth, uint32_t frameno) {
+TF_PURE
+uint32_t technicallyflac_size_frame_index(uint32_t blocksize, uint8_t channels, uint8_t bitdepth, uint32_t frameindex) {
     /* max size of a frame in bytes is:
      *   9 bytes of headers +
      *   1-6 for max frame number +
@@ -799,19 +814,19 @@ uint32_t technicallyflac_size_frame_frameno(uint32_t blocksize, uint8_t channels
         total_bytes++;
     }
     total_bytes += 11 + channels;
-    if(frameno < (uint32_t)1 << 7) {
+    if(frameindex < (uint32_t)1 << 7) {
         total_bytes += 1;
     }
-    else if(frameno < ((uint32_t)1<<11)) {
+    else if(frameindex < ((uint32_t)1<<11)) {
         total_bytes += 2;
     }
-    else if(frameno < ((uint32_t)1<<16)) {
+    else if(frameindex < ((uint32_t)1<<16)) {
         total_bytes += 3;
     }
-    else if(frameno < ((uint32_t)1 << 21)) {
+    else if(frameindex < ((uint32_t)1 << 21)) {
         total_bytes += 4;
     }
-    else if(frameno < ((uint32_t)1 << 26)) {
+    else if(frameindex < ((uint32_t)1 << 26)) {
         total_bytes += 5;
     }
     else {
@@ -820,18 +835,22 @@ uint32_t technicallyflac_size_frame_frameno(uint32_t blocksize, uint8_t channels
     return total_bytes;
 }
 
+TF_PURE
 uint32_t technicallyflac_size_frame(uint32_t blocksize, uint8_t channels, uint8_t bitdepth) {
-    return technicallyflac_size_frame_frameno(blocksize,channels,bitdepth,0x7FFFFFFF);
+    return technicallyflac_size_frame_index(blocksize,channels,bitdepth,0x7FFFFFFF);
 }
 
+TF_PURE
 uint32_t technicallyflac_size_metadata(uint32_t num_bytes) {
     return num_bytes + 4;
 }
 
+TF_PURE
 uint32_t technicallyflac_size_streaminfo(void) {
     return TECHNICALLYFLAC_STREAMINFO_SIZE;
 }
 
+TF_PURE
 uint32_t technicallyflac_size_streammarker(void) {
     return 4;
 }

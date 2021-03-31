@@ -21,20 +21,24 @@ See `technicallyflac.h` for details on how to use the library, also see `example
 
 ```C
 
+#define BUFFER_LEN 8192 /* some buffer length */
 technicallyflac f;
-f.samplerate = 44100;
-f.bitdepth = 16;
-f.channels = 2;
-f.blocksize = 1024;
-f.write = my_write_callback;
-f.userdata = my_userdata;
+uint8_t buffer[BUFFER_LEN];
+uint32_t bufferlen = BUFFER_LEN;
 
+technicallyflac_init(&f, 1024, 44100, 2, 16); /* validates parameters */
 
-technicallyflac_init(&f); /* validates parameters, writes out "fLaC" */
-technicallyflac_streaminfo(&f,1); /* writes the streaminfo block */
+technicallyflac_streammarker(&f,buffer,&bufferlen); /* writes the string "fLaC" into buffer */
+fwrite(buffer,1,bufferlen,output);
+
+bufferlen = BUFFER_LEN;
+technicallyflac_streaminfo(&f,buffer,&bufferlen,1); /* writes out the streaminfo block */
+fwrite(buffer,1,bufferlen,output);
 
 for(i=0;i<blocks_of_audio;i++) {
-    technicallyflac_encode(&f,blocks[i].data,blocks[i].size);
+    bufferlen = BUFFER_LEN;
+    technicallyflac_frame(&f,buffer,&bufferlen,blocks[i].size,blocks[i].data);
+    fwrite(buffer,1,bufferlen,output);
 }
 ```
 
