@@ -134,6 +134,15 @@ enum TECHNICALLYFLAC_STREAMINFO_STATE {
     TECHNICALLYFLAC_STREAMINFO_END,
 };
 
+enum TECHNICALLYFLAC_METADATA_STATE {
+    TECHNICALLYFLAC_METADATA_START,
+    TECHNICALLYFLAC_METADATA_LAST_FLAG,
+    TECHNICALLYFLAC_METADATA_BLOCK_TYPE,
+    TECHNICALLYFLAC_METADATA_BLOCK_LENGTH,
+    TECHNICALLYFLAC_METADATA_METADATA,
+    TECHNICALLYFLAC_METADATA_END,
+};
+
 struct technicallyflac_streammarker_state {
     enum TECHNICALLYFLAC_STREAMMARKER_STATE state;
 };
@@ -143,8 +152,8 @@ struct technicallyflac_streaminfo_state {
 };
 
 struct technicallyflac_metadata_state {
+    enum TECHNICALLYFLAC_METADATA_STATE state;
     uint32_t pos;
-    uint8_t flag;
 };
 
 struct technicallyflac_frame_header_state {
@@ -400,8 +409,7 @@ int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t sample
 
     f->sm_state.state   = TECHNICALLYFLAC_STREAMMARKER_START;
     f->si_state.state   = TECHNICALLYFLAC_STREAMINFO_START;
-    f->md_state.pos     = 0;
-    f->md_state.flag    = 0;
+    f->md_state.state   = TECHNICALLYFLAC_METADATA_START;
     f->fh_state.pos     = 0;
     f->fh_state.len     = 0;
     f->fr_state.channel = 0;
@@ -608,44 +616,60 @@ int technicallyflac_streaminfo(technicallyflac *f,uint8_t *output, uint32_t *byt
 }
 
 int technicallyflac_metadata(technicallyflac *f, uint8_t *output, uint32_t *bytes, uint8_t last_flag, uint8_t block_type, uint32_t block_length, uint8_t *block) {
-    int r;
-    uint32_t pos = 0;
-    f->bw.buffer = output;
-    f->bw.len = *bytes;
-    f->bw.pos = 0;
+    int r = 1;
 
     if(output == NULL || bytes == NULL || *bytes == 0) {
         return 4 + block_length;
     }
 
-    if(f->md_state.flag) {
-        f->md_state.pos = 0;
-        f->md_state.flag = 0;
-    }
+    f->bw.buffer = output;
+    f->bw.len = *bytes;
+    f->bw.pos = 0;
 
-    if(f->md_state.pos == 0) {
-        technicallyflac_bitwriter_init(&f->bw);
-        technicallyflac_bitwriter_add(&f->bw,1,last_flag);
-        technicallyflac_bitwriter_add(&f->bw,7,block_type);
-        technicallyflac_bitwriter_add(&f->bw,24,block_length);
-    }
-
-    while(f->bw.pos < f->bw.len) {
+    while(f->bw.pos < f->bw.len && r) {
         technicallyflac_bitwriter_flush(&f->bw);
-        f->md_state.pos += f->bw.pos - pos;
-        pos = f->bw.pos;
 
-        if(f->md_state.pos >= block_length + 4) break;
-
-        if(f->md_state.pos >= 4) {
-            technicallyflac_bitwriter_add(&f->bw,8,block[f->md_state.pos - 4]);
+        switch(f->md_state.state) {
+            case TECHNICALLYFLAC_METADATA_START: {
+                technicallyflac_bitwriter_init(&f->bw);
+                f->md_state.state = TECHNICALLYFLAC_METADATA_LAST_FLAG;
+                f->md_state.pos = 0;
+                break;
+            }
+            case TECHNICALLYFLAC_METADATA_LAST_FLAG: {
+                if(technicallyflac_bitwriter_add(&f->bw,1,last_flag)) {
+                    f->md_state.state = TECHNICALLYFLAC_METADATA_BLOCK_TYPE;
+                }
+                break;
+            }
+            case TECHNICALLYFLAC_METADATA_BLOCK_TYPE: {
+                if(technicallyflac_bitwriter_add(&f->bw,7,block_type)) {
+                    f->md_state.state = TECHNICALLYFLAC_METADATA_BLOCK_LENGTH;
+                }
+                break;
+            }
+            case TECHNICALLYFLAC_METADATA_BLOCK_LENGTH: {
+                if(technicallyflac_bitwriter_add(&f->bw,24,block_length)) {
+                    f->md_state.state = TECHNICALLYFLAC_METADATA_METADATA;
+                }
+                break;
+            }
+            case TECHNICALLYFLAC_METADATA_METADATA: {
+                if(technicallyflac_bitwriter_add(&f->bw,8,block[f->md_state.pos])) {
+                    f->md_state.pos++;
+                    if(f->md_state.pos == block_length) {
+                        f->md_state.state = TECHNICALLYFLAC_METADATA_END;
+                    }
+                }
+                break;
+            }
+            case TECHNICALLYFLAC_METADATA_END: {
+                if(f->bw.bits == 0) {
+                    r = 0;
+                    f->md_state.state = TECHNICALLYFLAC_METADATA_START;
+                }
+            }
         }
-    }
-
-    r = f->md_state.pos < block_length + 4;
-    if(r == 0) {
-        assert(f->bw.bits == 0);
-        f->md_state.flag = 1;
     }
 
     assert(f->bw.pos > 0);
