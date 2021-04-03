@@ -105,8 +105,16 @@ int technicallyflac_metadata(technicallyflac *f, uint8_t *output, uint32_t *byte
 /* write out a frame of audio. num_frames should be equal to your pre-configured block size, except for the last flac frame (where it may be less). */
 int technicallyflac_frame(technicallyflac *f, uint8_t *output, uint32_t *bytes, uint32_t num_frames, int32_t **frames);
 
+enum TECHNICALLYFLAC_STREAMMARKER_STATE {
+    TECHNICALLYFLAC_STREAMMARKER_START,
+    TECHNICALLYFLAC_STREAMMARKER_F,
+    TECHNICALLYFLAC_STREAMMARKER_L,
+    TECHNICALLYFLAC_STREAMMARKER_A,
+    TECHNICALLYFLAC_STREAMMARKER_C,
+};
+
 struct technicallyflac_streammarker_state {
-    uint32_t pos;
+    enum TECHNICALLYFLAC_STREAMMARKER_STATE state;
 };
 
 struct technicallyflac_streaminfo_state {
@@ -196,7 +204,7 @@ static int technicallyflac_frame_header(technicallyflac *f, uint8_t *output, uin
 typedef struct technicallyflac_bitwriter_s technicallyflac_bitwriter;
 
 static void technicallyflac_bitwriter_init(technicallyflac_bitwriter *bw);
-static void technicallyflac_bitwriter_add(technicallyflac_bitwriter *bw, uint8_t bits, uint64_t val);
+static int technicallyflac_bitwriter_add(technicallyflac_bitwriter *bw, uint8_t bits, uint64_t val);
 static void technicallyflac_bitwriter_align(technicallyflac_bitwriter *bw);
 
 static const uint8_t technicallyflac_crc8_table[256] = {
@@ -300,13 +308,16 @@ static void technicallyflac_bitwriter_flush(technicallyflac_bitwriter *bw) {
 
 /* assumption: user called flush and validated
  * they can store the available bits */
-static void technicallyflac_bitwriter_add(technicallyflac_bitwriter *bw, uint8_t bits, uint64_t val) {
+static int technicallyflac_bitwriter_add(technicallyflac_bitwriter *bw, uint8_t bits, uint64_t val) {
     uint64_t mask  = -1LL;
-    assert(bw->bits + bits <= 64);
+    if(bw->bits + bits > 64) {
+        return 0;
+    }
     mask >>= (64 - bits);
     bw->val <<= bits;
     bw->val |= val & mask;
     bw->bits += bits;
+    return 1;
 }
 
 static void technicallyflac_bitwriter_align(technicallyflac_bitwriter *bw) {
@@ -368,7 +379,7 @@ int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t sample
     f->samplesize = f->bitdepth / 8;
     f->frameindex = 0;
 
-    f->sm_state.pos     = 0;
+    f->sm_state.state   = TECHNICALLYFLAC_STREAMMARKER_START;
     f->si_state.pos     = 0;
     f->md_state.pos     = 0;
     f->md_state.flag    = 0;
@@ -388,6 +399,8 @@ int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t sample
 }
 
 int technicallyflac_streammarker(technicallyflac *f, uint8_t *output, uint32_t *bytes) {
+    int r = 1;
+
     if(output == NULL || bytes == NULL || *bytes == 0) {
         return 4;
     }
@@ -396,24 +409,49 @@ int technicallyflac_streammarker(technicallyflac *f, uint8_t *output, uint32_t *
     f->bw.len = *bytes;
     f->bw.pos = 0;
 
-    if(f->sm_state.pos >= 4) {
-        f->sm_state.pos = 0;
+    while(f->bw.pos < f->bw.len && r) {
+        technicallyflac_bitwriter_flush(&f->bw);
+
+        switch(f->sm_state.state) {
+            case TECHNICALLYFLAC_STREAMMARKER_START: {
+                technicallyflac_bitwriter_init(&f->bw);
+                if(technicallyflac_bitwriter_add(&f->bw,8,'f')) {
+                    f->sm_state.state = TECHNICALLYFLAC_STREAMMARKER_F;
+                }
+                break;
+            }
+            case TECHNICALLYFLAC_STREAMMARKER_F: {
+                if(technicallyflac_bitwriter_add(&f->bw,8,'L')) {
+                    f->sm_state.state = TECHNICALLYFLAC_STREAMMARKER_L;
+                }
+                break;
+            }
+            case TECHNICALLYFLAC_STREAMMARKER_L: {
+                if(technicallyflac_bitwriter_add(&f->bw,8,'a')) {
+                    f->sm_state.state = TECHNICALLYFLAC_STREAMMARKER_A;
+                }
+                break;
+            }
+            case TECHNICALLYFLAC_STREAMMARKER_A: {
+                if(technicallyflac_bitwriter_add(&f->bw,8,'C')) {
+                    f->sm_state.state = TECHNICALLYFLAC_STREAMMARKER_C;
+                }
+                break;
+            }
+            case TECHNICALLYFLAC_STREAMMARKER_C: {
+                if(f->bw.bits == 0) {
+                    r = 0;
+                    f->sm_state.state = TECHNICALLYFLAC_STREAMMARKER_START;
+                }
+                break;
+            }
+        }
     }
 
-    if(f->sm_state.pos == 0) {
-        technicallyflac_bitwriter_init(&f->bw);
-        technicallyflac_bitwriter_add(&f->bw,8,'f');
-        technicallyflac_bitwriter_add(&f->bw,8,'L');
-        technicallyflac_bitwriter_add(&f->bw,8,'a');
-        technicallyflac_bitwriter_add(&f->bw,8,'C');
-    }
-
-    technicallyflac_bitwriter_flush(&f->bw);
-    f->sm_state.pos += f->bw.pos;
     assert(f->bw.pos > 0);
     *bytes = f->bw.pos;
 
-    return f->sm_state.pos < 4;
+    return r;
 }
 
 int technicallyflac_streaminfo(technicallyflac *f,uint8_t *output, uint32_t *bytes, uint8_t last_flag) {
