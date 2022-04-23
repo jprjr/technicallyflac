@@ -438,6 +438,7 @@ int technicallyflac_init(technicallyflac *f, uint32_t blocksize, uint32_t sample
     f->md_state.state   = TECHNICALLYFLAC_METADATA_START;
     f->fr_state.state   = TECHNICALLYFLAC_FRAME_START;
     f->fr_state.subframe.channels = ( f->channels < 8 ? f->channels : 2 );
+    technicallyflac_bitwriter_init(&f->bw);
 
     return 0;
 }
